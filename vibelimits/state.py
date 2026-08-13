@@ -33,11 +33,11 @@ class EventRecord:
     dispatched_at: datetime | None = None
 
     def to_json(self) -> dict:
-        d = asdict(self)
-        d["occurred_at"] = aware(self.occurred_at).isoformat()
-        d["dispatched_at"] = aware(self.dispatched_at).isoformat() if self.dispatched_at else None
-        d["meta"] = self.meta or {}
-        return d
+        data = asdict(self)
+        data["occurred_at"] = aware(self.occurred_at).isoformat()
+        data["dispatched_at"] = aware(self.dispatched_at).isoformat() if self.dispatched_at else None
+        data["meta"] = self.meta or {}
+        return data
 
     @classmethod
     def from_json(cls, data: dict) -> "EventRecord":
@@ -52,14 +52,12 @@ class StateStore:
     def __init__(self, path: str | None = None):
         self.path = Path(path or os.getenv("STATE_FILE", "./vibelimits-state.json"))
         self.lock = threading.RLock()
-        self.data = {
-            "snapshots": {},
-            "evidence": {},
-            "events": {},
-            "seen_sources": [],
-            "subscriptions": {},
-        }
+        self.data = self._empty_state()
         self._load()
+
+    @staticmethod
+    def _empty_state() -> dict:
+        return {"snapshots": {}, "evidence": {}, "events": {}, "seen_sources": [], "subscriptions": {}}
 
     def _load(self) -> None:
         if not self.path.exists():
@@ -67,9 +65,14 @@ class StateStore:
         try:
             loaded = json.loads(self.path.read_text())
             if isinstance(loaded, dict):
-                self.data.update(loaded)
+                fresh = self._empty_state()
+                fresh.update(loaded)
+                self.data = fresh
         except Exception:
             return
+
+    def _refresh(self) -> None:
+        self._load()
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -82,19 +85,20 @@ class StateStore:
 
     def get_snapshot(self, sensor_id: str, provider: str) -> dict | None:
         with self.lock:
+            self._refresh()
             return self.data["snapshots"].get(self.snapshot_key(sensor_id, provider))
 
     def put_snapshot(self, sensor_id: str, provider: str, collected_at: datetime, windows: list[dict], meta: dict) -> None:
         with self.lock:
+            self._refresh()
             self.data["snapshots"][self.snapshot_key(sensor_id, provider)] = {
-                "collected_at": aware(collected_at).isoformat(),
-                "windows": windows,
-                "meta": meta,
+                "collected_at": aware(collected_at).isoformat(), "windows": windows, "meta": meta,
             }
             self._save()
 
     def add_evidence(self, fingerprint: str, sensor_id: str, observed_at: datetime, meta: dict) -> int:
         with self.lock:
+            self._refresh()
             evidence = self.data["evidence"].setdefault(fingerprint, {})
             evidence.setdefault(sensor_id, {"observed_at": aware(observed_at).isoformat(), "meta": meta})
             self._save()
@@ -102,10 +106,12 @@ class StateStore:
 
     def source_seen(self, key: str) -> bool:
         with self.lock:
+            self._refresh()
             return key in set(self.data["seen_sources"])
 
     def mark_source_seen(self, key: str) -> None:
         with self.lock:
+            self._refresh()
             if key not in self.data["seen_sources"]:
                 self.data["seen_sources"].append(key)
                 self._save()
@@ -114,6 +120,7 @@ class StateStore:
                      title: str, summary: str, occurred_at: datetime, evidence_count: int = 1,
                      source_url: str | None = None, meta: dict | None = None) -> EventRecord:
         with self.lock:
+            self._refresh()
             existing = self.data["events"].get(fingerprint)
             if existing:
                 event = EventRecord.from_json(existing)
@@ -138,21 +145,23 @@ class StateStore:
 
     def list_events(self, provider: str | None = None, limit: int = 50, include_detected: bool = False) -> list[EventRecord]:
         with self.lock:
-            events = [EventRecord.from_json(x) for x in self.data["events"].values()]
+            self._refresh()
+            events = [EventRecord.from_json(item) for item in self.data["events"].values()]
         if provider:
-            events = [e for e in events if e.provider == provider]
+            events = [event for event in events if event.provider == provider]
         if not include_detected:
-            events = [e for e in events if e.confidence in {"confirmed", "official"}]
-        events.sort(key=lambda e: e.occurred_at, reverse=True)
+            events = [event for event in events if event.confidence in {"confirmed", "official"}]
+        events.sort(key=lambda event: event.occurred_at, reverse=True)
         return events[:limit]
 
     def pending_events(self, limit: int = 50) -> list[EventRecord]:
-        events = [e for e in self.list_events(limit=10000, include_detected=False) if not e.dispatched_at]
-        events.sort(key=lambda e: e.occurred_at)
+        events = [event for event in self.list_events(limit=10000, include_detected=False) if not event.dispatched_at]
+        events.sort(key=lambda event: event.occurred_at)
         return events[:limit]
 
     def mark_dispatched(self, fingerprint: str) -> None:
         with self.lock:
+            self._refresh()
             raw = self.data["events"].get(fingerprint)
             if not raw:
                 return
@@ -163,10 +172,12 @@ class StateStore:
 
     def get_subscription(self, recipient_id: str) -> dict | None:
         with self.lock:
+            self._refresh()
             return self.data["subscriptions"].get(recipient_id)
 
     def set_subscription(self, recipient_id: str, enabled: bool, provider_filters: list[str] | None = None) -> None:
         with self.lock:
+            self._refresh()
             current = self.data["subscriptions"].get(recipient_id, {})
             current["enabled"] = enabled
             if provider_filters is not None:
@@ -177,7 +188,8 @@ class StateStore:
 
     def active_subscriptions(self) -> dict[str, dict]:
         with self.lock:
-            return {k: dict(v) for k, v in self.data["subscriptions"].items() if v.get("enabled")}
+            self._refresh()
+            return {key: dict(value) for key, value in self.data["subscriptions"].items() if value.get("enabled")}
 
 
 store = StateStore()
