@@ -44,7 +44,6 @@ class QuotaWindow(BaseModel):
 class SensorReport(BaseModel):
     sensor_id: str = Field(min_length=8, max_length=128)
     provider: str
-    account_hash: str = Field(min_length=8, max_length=128)
     collected_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     windows: list[QuotaWindow] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)
