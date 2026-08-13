@@ -1,0 +1,1 @@
+"""Provider announcement source adapters."""
