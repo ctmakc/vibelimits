@@ -10,6 +10,7 @@ from .engine import EventEngine
 from .providers import PROVIDERS
 from .schemas import EventOut, SensorReport
 from .state import EventRecord, store
+from .telegram import TelegramService
 
 
 engine = EventEngine(store)
@@ -68,8 +69,10 @@ def events(
 
 
 @app.post("/api/v1/sensor/report", dependencies=[Depends(sensor_auth)])
-def sensor_report(report: SensorReport):
+async def sensor_report(report: SensorReport):
     events = engine.ingest_sensor(report)
+    if any(event.confidence in {"confirmed", "official"} for event in events):
+        await TelegramService().dispatch_pending()
     return {
         "accepted": True,
         "events": [serialize_event(event).model_dump(mode="json") for event in events],
