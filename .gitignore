@@ -1,0 +1,9 @@
+.env
+*.db
+vibelimits-state.json
+__pycache__/
+.pytest_cache/
+*.pyc
+.venv/
+dist/
+build/
