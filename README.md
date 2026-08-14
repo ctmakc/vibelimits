@@ -8,34 +8,70 @@ VibeLimits monitors AI-coding quota changes, correlates unexpected resets across
 
 Supported registry: **Codex, Claude Code, Cursor, Windsurf, Gemini CLI, GitHub Copilot, Kiro, Zed, OpenCode, Amp, Cline, Roo Code and GitHub Spark.**
 
+## Live service
+
+Production API + dashboard:
+
+`https://heocjdyufceudxdbghck.supabase.co/functions/v1/vibelimits-api`
+
+Endpoints:
+
+```text
+GET  /health
+GET  /providers
+GET  /events
+POST /sensor/register
+POST /sensor/report
+```
+
+The production backend runs on Supabase Edge Functions + Postgres. Historical entries are limited to source-backed official provider changes; global reset events require independent sensor evidence.
+
 ## What works today
 
-- X API v2 and RSS/Atom official-source collectors;
-- crowd reset correlation with configurable confirmation threshold;
+- production Supabase Postgres event/state store;
+- public Edge API and minimal live dashboard;
+- crowd reset correlation with a 3-installation confirmation threshold;
 - scheduled personal-reset suppression;
+- privacy-preserving per-install sensor registration;
 - Codex rate-limit payload parser;
 - OpenUsage JSON normalizer for additional coding tools;
-- Telegram channel delivery and personal provider filters;
-- FastAPI event API and minimal web dashboard;
-- lightweight JSON state store;
+- X API v2 and RSS/Atom collectors in the self-hosted worker;
+- Telegram channel delivery and personal provider filters in the self-hosted worker;
 - 7 tests covering classification, Codex parsing and reset correlation.
 
-A reset starts as `detected` and becomes `confirmed` only after enough independent installations report the same unexpected quota drop. Official provider announcements are stored as `official`.
+A reset starts as `detected` and becomes `confirmed` only after three independent installations report the same unexpected quota drop. Official provider announcements are stored as `official`.
 
-## Quick start
+## Install the sensor
 
 ```bash
 git clone https://github.com/ctmakc/vibelimits.git
 cd vibelimits
-cp .env.example .env
 python -m venv .venv
 source .venv/bin/activate
-pip install -e '.[dev]'
+pip install -e .
 ```
 
-Run the API/dashboard:
+Normalize only:
 
 ```bash
+openusage export --json | vibelimits-sensor --format openusage
+cat codex-rate-limits.json | vibelimits-sensor --format codex
+```
+
+Normalize and submit to the live radar:
+
+```bash
+openusage export --json | vibelimits-sensor --format openusage --submit
+cat codex-rate-limits.json | vibelimits-sensor --format codex --submit
+```
+
+On first submit VibeLimits creates a random installation token under `~/.config/vibelimits/`. Reports contain quota-window data and a random installation UUID. They intentionally exclude prompts, source code, repository contents, hostname and account identity.
+
+## Self-hosted API / worker
+
+```bash
+cp .env.example .env
+pip install -e '.[dev]'
 vibelimits
 ```
 
@@ -45,45 +81,13 @@ Run official-source monitoring and Telegram delivery in a second process:
 vibelimits-worker --interval 60
 ```
 
-Open `http://localhost:8080`.
-
-Endpoints:
-
-```text
-GET  /health
-GET  /api/v1/providers
-GET  /api/v1/events
-POST /api/v1/sensor/report
-```
+Local FastAPI endpoints remain available under `/api/v1/*` for self-hosted deployments.
 
 ## Telegram
 
 Set `TELEGRAM_BOT_TOKEN` and optionally `TELEGRAM_CHANNEL_ID` in `.env`.
 
 Commands: `/start`, `/stop`, `/status`, `/providers`, `/only codex,claude_code,cursor`, `/all`, `/latest`.
-
-## Local quota reports
-
-`vibelimits-sensor` normalizes local JSON into VibeLimits sensor reports. It emits quota-window data plus a random installation UUID.
-
-```bash
-openusage export --json | vibelimits-sensor --format openusage
-cat codex-rate-limits.json | vibelimits-sensor --format codex
-```
-
-A report sent to `POST /api/v1/sensor/report` contains:
-
-```json
-{
-  "sensor_id": "random-installation-uuid",
-  "provider": "codex",
-  "windows": [
-    {"name": "weekly", "used_percent": 87, "reset_at": "2026-08-17T12:00:00Z"}
-  ]
-}
-```
-
-The sensor design intentionally excludes prompts, source code, repository contents and account identity data.
 
 ## Development
 
@@ -94,7 +98,7 @@ pytest -q
 
 ## Roadmap
 
-Next: Discord/webhooks, signed sensor registration, richer provider adapters, historical reset timelines, confidence scoring and reset-probability forecasting.
+Next: Discord/webhooks, richer provider adapters, historical reset timelines, confidence scoring, reset-probability forecasting and a dedicated public frontend/domain.
 
 See [`ROADMAP.md`](ROADMAP.md).
 
